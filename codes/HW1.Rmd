@@ -1,0 +1,211 @@
+---
+title: "IE 582 Homework 1"
+author: "Burak Tabak (2019702177)"
+date: "November 6, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = F,error = F,message = F)
+```
+
+# Introduction
+
+In this report, the codes and results is summarised for the tasks in Homework 1.
+
+Firstly, we get the data for the last three season of English Premier League. We will add the season information as feature to data and bind them all to analyze complete data.
+
+```{r}
+# Import libraries
+library(data.table)
+library(tidyverse)
+library(lubridate)
+
+# Read data
+tryCatch({
+data_2018 = read.csv("https://www.football-data.co.uk/mmz4281/1819/E0.csv")
+data_2019 = read.csv("https://www.football-data.co.uk/mmz4281/1920/E0.csv")
+data_2020 = read.csv("https://www.football-data.co.uk/mmz4281/2021/E0.csv")
+},error=function(e){
+  print("Error in server side! Taking data from local file.")
+})
+
+# Bind them
+full_data = tryCatch({
+  data_2018%>%mutate(SeasonInfo=2018)%>%
+  bind_rows(data_2019%>%mutate(SeasonInfo=2019))%>%
+  bind_rows(data_2020%>%mutate(SeasonInfo=2020))
+},error=function(e){
+  readRDS("/home/burak/Desktop/Lectures/IE582/HW1/downloaded_data.rds")
+})
+
+rm(data_2018,data_2019,data_2020)
+# Look the data
+head(full_data[,1:63],3)
+```
+
+
+## Task 1
+
+### Task 1.1
+
+In this part, we will look at the histogram of
+
+* Home Score(goals)
+* Away Score(goals)
+* Home Score(goals)– Away Score(goals)
+
+for each season.
+
+```{r fig.width=12, fig.height=8}
+# Task 1.1
+p1=ggplot(full_data) + geom_histogram(aes(FTHG,fill=as.factor(SeasonInfo)),binwidth = 0.5,show.legend = F)+facet_wrap(~SeasonInfo,nrow=3)+theme_bw()+
+  labs(x="“Home Goals",y="Number of Games")
+p2=ggplot(full_data) + geom_histogram(aes(FTHG-FTAG,fill=as.factor(SeasonInfo)),binwidth = 0.5,show.legend = F)+facet_wrap(~SeasonInfo,nrow=3)+theme_bw()+
+  labs(x="“Home goals – Away Goals",y="Number of Games")
+p3=ggplot(full_data) + geom_histogram(aes(FTAG,fill=as.factor(SeasonInfo)),binwidth = 0.5,show.legend = F)+facet_wrap(~SeasonInfo,nrow=3)+theme_bw()+
+  labs(x="“Away Goals",y="Number of Games")
+gridExtra::grid.arrange(p1,p2,p3,ncol=3)
+
+```
+
+From the graph above, we can observe that:
+
+* Home-Away goals tends to > 0 because of home team advantage.
+* The distributions of the different seasons look similar.
+* As it is known, for home and away goals, we have distribution with nonnegative and integer valued (discrete) support.
+* Number of observation for 2020-2021 is smaller compared to other seasons as expected. 
+
+### Task 1.2
+
+In this part, we will try to understand the distribution of the home and away goals.
+
+In Task 1.1, we have analyzed the home and away goal for each season separately. In this part, We consider all three season as a whole. So, home and away goal histograms as follows for three season.
+
+```{r fig.width=12, fig.height=8}
+p1=ggplot(full_data) + geom_histogram(aes(FTHG,fill="Home Goals"),binwidth = 0.5,show.legend = F)+theme_bw()+
+  labs(x="“Home Goals",y="Number of Games")
+p2=ggplot(full_data) + geom_histogram(aes(FTAG,fill="Away Goals"),binwidth = 0.5,show.legend = F)+theme_bw()+
+  labs(x="“Away Goals",y="Number of Games")
+gridExtra::grid.arrange(p1,p2,ncol=2)
+
+```
+
+As we already mentioned in Task 1.1 observations, we have non-negative integer valued distribution. So; some possible distribution candidates as follows:
+
+* Poisson Distribution
+* Negative Binomial Distribution
+* Binomial Distribution (theoratically n can be Inf but goals can be thought as success with bounded n)
+
+From the list, we will analyze the goodness of fit for Poisson Distribution .
+
+To visualize the Poisson fit,  we will calculate the expected number of games corresponding to each quantile with Poisson distribution by using sample means as distribution mean and plot these values on the histogram
+
+```{r fig.width=12, fig.height=8}
+mean_home_goals= mean(full_data$FTHG,na.rm=T)
+mean_away_goals= mean(full_data$FTAG,na.rm=T)
+number_of_observation = length(full_data$FTHG)
+
+empirical_poisson_home = function(x){
+  return(dpois(x,lambda = mean_home_goals)*number_of_observation)
+  }
+empirical_poisson_away = function(x){
+  return(dpois(x,lambda = mean_away_goals)*number_of_observation)
+  }
+
+p1=ggplot(full_data,aes(FTHG)) + geom_histogram(aes(fill="Home Goals"),binwidth = 0.5,show.legend = F)+theme_bw()+
+    geom_line(aes(y=empirical_poisson_home(FTHG))) +
+  labs(x="“Home Goals",y="Number of Games",title=paste0("Poisson with Lambda: ",round(mean_home_goals,2)))
+p2=ggplot(full_data,aes(FTAG)) + geom_histogram(aes(fill="Away Goals"),binwidth = 0.5,show.legend = F)+theme_bw()+
+    geom_line(aes(y=empirical_poisson_away(FTAG))) +
+  labs(x="“Away Goals",y="Number of Games",title=paste0("Poisson with Lambda: ",round(mean_away_goals,2)))
+gridExtra::grid.arrange(p1,p2,ncol=2)
+
+```
+
+From the graphs, we can observe that home and away goal distributions are similar to Poisson Distribution.
+
+## Task 2
+
+In this task; B365 (Bet365) , BW (BetandWin) , PS (Pinnacle) and WH (William Hill) have been selected as bookmakers.
+
+### Task 2.1
+
+In this part, we will calculate probabilities and show probabilities from the different bookmakers for random match.
+
+```{r}
+selected_data=full_data%>%transmute(HomeTeam,AwayTeam,FTHG,FTAG,FTR,SumRed=HR+AR,HomeOdd=B365H,DrawOdd=B365D,AwayOdd=B365A,Bookmaker="Bet365")%>%
+  bind_rows(full_data%>%transmute(HomeTeam,AwayTeam,FTHG,FTAG,FTR,SumRed=HR+AR,HomeOdd=BWH,DrawOdd=BWD,AwayOdd=BWA,Bookmaker="BetandWin"))%>%
+    bind_rows(full_data%>%transmute(HomeTeam,AwayTeam,FTHG,FTAG,FTR,SumRed=HR+AR,HomeOdd=PSH,DrawOdd=PSD,AwayOdd=PSA,Bookmaker="Pinnacle"))%>%
+      bind_rows(full_data%>%transmute(HomeTeam,AwayTeam,FTHG,FTAG,FTR,SumRed=HR+AR,HomeOdd=WHH,DrawOdd=WHD,AwayOdd=WHA,Bookmaker="WilliamHill"))%>%
+  mutate(HomeProb=1/HomeOdd,DrawProb=1/DrawOdd,AwayProb=1/AwayOdd)%>%
+  mutate(SumProb=HomeProb+DrawProb+AwayProb)
+
+example_data = selected_data%>%filter(HomeTeam=="Man United"&AwayTeam=="Leicester"&FTHG==2&FTAG==1)
+
+kableExtra::kable(example_data,digits = 2)%>%kableExtra::kable_paper(full_width=F)
+
+```
+
+### Task 2.2
+
+```{r}
+selected_data=selected_data%>%mutate(HomeProbAdj=HomeProb/SumProb,
+                                     DrawProbAdj=DrawProb/SumProb,
+                                     AwayProbAdj=AwayProb/SumProb,
+                                     SumProbAdj=HomeProbAdj+DrawProbAdj+AwayProbAdj
+                                     )
+example_data = selected_data%>%filter(HomeTeam=="Man United"&AwayTeam=="Leicester"&FTHG==2&FTAG==1)
+
+kableExtra::kable(example_data[,-(1:8)],digits = 2)%>%kableExtra::kable_paper(full_width=F)
+
+```
+
+
+### Task 2.3 - 4
+
+Firstly, plot P(Draw) against P(Home) - P(Away)
+
+```{r}
+ggplot(selected_data)+geom_point(aes(x=HomeProb-AwayProb,y=DrawProb,col=Bookmaker))+facet_wrap(~Bookmaker)+theme_bw()
+```
+
+Now, calculate empirical results and draw it on the plot for each bookmaker.
+
+```{r}
+empirical_draws=selected_data%>%
+  mutate(empirical_bin=cut(HomeProb-AwayProb,breaks = unique(c(seq(-1,-0.1,0.18),seq(-0.1,0.1,0.05),seq(0.1,1,0.18)))))%>%group_by(Bookmaker,empirical_bin)%>%
+  summarise(plot_point=mean(HomeProb-AwayProb,na.rm=T),DrawRate=sum(FTR=="D")/n())
+head(empirical_draws)
+
+selected_data_with_theoratic=selected_data%>%
+  mutate(empirical_bin=cut(HomeProb-AwayProb,breaks=unique(c(seq(-1,-0.1,0.18),seq(-0.1,0.1,0.05),seq(0.1,1,0.18)))))%>%left_join(empirical_draws)
+
+ggplot(selected_data_with_theoratic)+geom_point(aes(x=HomeProb-AwayProb,y=DrawProb,col=Bookmaker))+
+  geom_point(aes(x=plot_point,y=DrawRate))+facet_wrap(~Bookmaker)+theme_bw()
+
+```
+
+We can observe that for each bookmaker, when Home - Away probability ~ 0 , there is a positive bias between empirical draw rates and draw probabilities. Betting on draw when home-away probability ~ 0 can be advantageous. Also, at tails; we can observe that draw probabilities >> empirical draw rates. Lastly, When Home - Away Prob > 0, gap between empirical rates and probabilities are smaller compared to   Home - Away Prob < 0 case.
+
+
+## Task 3
+
+In this part, we will remove the matches with the red card and make the analysis in Task 2.
+
+```{r}
+empirical_draws_no_red=selected_data%>%filter(SumRed==0)%>%
+  mutate(empirical_bin=cut(HomeProb-AwayProb,breaks = unique(c(seq(-1,-0.1,0.18),seq(-0.1,0.1,0.05),seq(0.1,1,0.18)))))%>%group_by(Bookmaker,empirical_bin)%>%
+  summarise(plot_point_no_red=mean(HomeProb-AwayProb,na.rm=T),DrawRateNoRed=sum(FTR=="D")/n())
+
+selected_data_with_no_red=selected_data%>%filter(SumRed==0)%>%
+  mutate(empirical_bin=cut(HomeProb-AwayProb,breaks=unique(c(seq(-1,-0.1,0.18),seq(-0.1,0.1,0.05),seq(0.1,1,0.18)))))%>%left_join(empirical_draws)%>%
+  left_join(empirical_draws_no_red)
+
+ggplot(selected_data_with_no_red)+geom_point(aes(x=HomeProb-AwayProb,y=DrawProb,col=Bookmaker))+
+  geom_point(aes(x=plot_point,y=DrawRate,shape="Full"))+geom_point(aes(x=plot_point_no_red,y=DrawRateNoRed,shape="NoRed"))+facet_wrap(~Bookmaker)+theme_bw()
+
+
+```
+
+We cannot see significant difference except that near 0, draw rates of matches with no red card is less than full draw rate.
