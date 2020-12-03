@@ -7,3 +7,7 @@
 ## Week 2 (2 November)
 
 [Here](files/HW1.html) is my codes and results for Homework 1. Codes are [Here](codes/HW1.Rmd)
+
+## Week 6 (30 November)
+
+[Here](files/HW2.html) is my codes and results for Homework 2. Codes are [Here](codes/HW2.Rmd)

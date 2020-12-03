@@ -1,0 +1,194 @@
+---
+title: "IE 582 Homework 2"
+author: "Burak Tabak (2019702177)"
+date: "November 29, 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = F,error = F,message = F)
+```
+
+# Introduction
+
+In this report, the codes and results is summarised for the tasks in Homework 2.
+
+Firstly, we get the train data for X,Y,Z axis measurements and bind them. After that, the data converted to long format with TimeID, Timestep, X , Y, Z and Class.
+
+Also, Velocity is calculated from acceleration by cumsum. 
+
+Below, you can find initial data.
+
+```{r}
+# Import libraries
+library(data.table)
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+library(plotly)
+
+train_data_path="/home/burak/Desktop/Lectures/IE582/HW2/Train"
+
+# Read Data
+X_Train = fread(list.files(train_data_path,full.names = T)[1])%>%mutate(axis="X",TimeId=row_number())
+Y_Train = fread(list.files(train_data_path,full.names = T)[2])%>%mutate(axis="Y",TimeId=row_number())
+Z_Train = fread(list.files(train_data_path,full.names = T)[3])%>%mutate(axis="Z",TimeId=row_number())
+Train = rbind(X_Train,Y_Train,Z_Train)
+colnames(Train) <- c("Class",paste0("Time",1:315),"Axis","TimeID")
+
+# Convert to Long Format
+Train = Train %>% select(TimeID,Class,Axis,everything())
+Train_Final = melt(Train,1:3)%>%transmute(TimeID,Class,Axis,TimeINDEX=as.numeric(gsub("Time","",variable,fixed=T)),value)%>%
+  spread(Axis,value)%>%select(TimeID,TimeINDEX,X,Y,Z,Class)%>% mutate(VX = cumsum(X),VY = cumsum(Y),VZ = cumsum(Z))
+
+head(Train_Final) %>%
+kbl(caption = "Initial Data") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+## Task - a
+
+Now, in this part; we will plot velocity for each class and try to figure out the relation between gesture figures.
+
+Firstly, two plot will be illustrated and findings will be summarised below.
+
+```{r results='asis'}
+
+# Get one example for each class.
+Train_Plot = Train_Final %>%group_by(Class,TimeINDEX)%>%
+  mutate(rn=row_number())%>%ungroup()%>%filter(rn==1)%>%select(-rn)
+
+for(class in 1:8){
+  data=Train_Plot%>%filter(Class==class)
+  title_name=paste0("Gesture - ",class)
+  plot3D::scatter3D(x=data$VX, y = data$VY, z = data$VZ,colvar = data$TimeINDEX,main=title_name)
+}
+```
+
+From the graphs, we can observe that;
+
+* The points projections on 2D hyperplane that containts point are similar to shape in Figure 1.
+* For Gesture 3, we can see that movement start from left to right like 3rd figure in Figure 1.
+* As like 4th figure, Gesture 4 is the opposite of Gesture 3.
+* For Gesture 5, we can see that movement start from bottom to yop like 5th figure in Figure 1.
+* As like 6th figure, Gesture 6 is the opposite of Gesture 5.
+* We can observe that Gesture 7 and Gesture 8 have clock-wise and counter clock-wise movements like in Figure 1.
+
+
+## Task - b
+
+In this part, we will transform 3D X,Y,Z feature set to 1D feature by applying Principal Component Analysis.
+
+Now, apply PCA to scaled data and bind Principal Components to original data.
+
+```{r}
+pca_all = princomp(Train_Final%>%select(X,Y,Z),cor=T)
+summary(pca_all)
+var_exp=(pca_all$sdev^2)/sum(pca_all$sdev^2)
+plot(cumsum(var_exp), xlab = "PC",ylab = "Cumulative Variance Explained (%)", type = "b")
+
+```
+
+From the results, we can observe that almost half of the total variance is explanied by first principal component. With first two, we cover %80 of total variance.
+
+Now, derive Principal Component scores.
+
+```{r}
+Train_Scored = cbind(Train_Final,pca_all$scores)
+head(Train_Scored) %>%
+kbl(caption = "Data with Principal Components") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+After that, plot first principal component values for each class to check whether classes can be differentiable by shape.
+
+```{r fig.width=12, fig.height=8}
+# Get two example for each class.
+Train_PC1 = Train_Scored %>%group_by(Class,TimeINDEX)%>%
+  mutate(rn=row_number())%>%ungroup()%>%filter(rn<=2)%>%select(-rn)
+
+ggplot(Train_PC1)+geom_point(aes(x=TimeINDEX,y=Comp.1,col=as.factor(Class)))+facet_wrap(~Class)+theme_bw()
+ggplot(Train_PC1)+geom_point(aes(x=TimeINDEX,y=Comp.1,col=as.factor(Class)))+theme_bw()
+
+```
+
+
+We can observe that;
+
+* Time series of first PC are similar within classes especially for 1,2,5,6,7
+* The series for different classes looks different.
+* Although similarity can be seen, there are differences because total variance explained by first principal component is the half of total variance.
+
+## Task - c
+
+In this part, we will apply PCA for each gesture and compare results with b part.
+
+```{r}
+
+Train_Scored_Sep = tibble()
+
+for(gesture in 1:8){
+  print(paste0("Gesture ",gesture))
+  pca_temp = princomp(Train_Final%>%filter(Class==gesture)%>%select(X,Y,Z),cor=T)
+  s=summary(pca_temp)
+  print(s)
+  var_exp=(pca_temp$sdev^2)/sum(pca_temp$sdev^2)
+  plot(cumsum(var_exp), xlab = "PC",ylab = "Cumulative Variance Explained (%)", type = "b")
+  Train_Scored_Sep = rbind(Train_Scored_Sep,cbind(Train_Final%>%filter(Class==gesture),pca_temp$scores))
+}
+
+head(Train_Scored_Sep) %>%
+kbl(caption = "Data with Principal Components for Each Gesture") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+After that, plot first principal component values for each class to check whether classes can be differentiable by shape.
+
+```{r}
+# Get two example for each class.
+Train_PC1_Sep = Train_Scored_Sep %>%group_by(Class,TimeINDEX)%>%
+  mutate(rn=row_number())%>%ungroup()%>%filter(rn<=2)%>%select(-rn)
+
+ggplot(Train_PC1_Sep)+geom_point(aes(x=TimeINDEX,y=Comp.1,col=as.factor(Class)))+facet_wrap(~Class)+theme_bw()
+ggplot(Train_PC1_Sep)+geom_point(aes(x=TimeINDEX,y=Comp.1,col=as.factor(Class)))+theme_bw()
+
+```
+
+
+From the above results, it can be seen that apart from Gesture 1, all other Gestures has first principal component with larger variance coverage. So, It seems reasonable to apply PCA to each gesture separately.
+
+Also, it is clear that with larger variance coverage, the shape of time series from the same class is more similar compared to part b.
+
+## Task - d
+
+Now, we will find Euclidean Distance between each time series for each axis and then sum them up to obtain final distance measure.
+
+```{r}
+x_dist=dist(X_Train[,2:316],method = "euclidean",upper = T)
+y_dist=dist(Y_Train[,2:316],method = "euclidean",upper = T)
+z_dist=dist(Z_Train[,2:316],method = "euclidean",upper = T)
+sum_dist = x_dist + y_dist + z_dist
+
+### Summary of first 10
+as.matrix(sum_dist)[1:10,1:10]
+```
+
+Now, we will apply multidimensional scaling to visualize time series in 2D by using dissimilarity measure.
+
+```{r}
+md2 <- cmdscale(sum_dist, k=2, eig=T)
+
+points2d = as.data.frame(md2$points)
+points2d$class = X_Train$V1
+
+ggplot(points2d)+geom_point(aes(x=V1,y=V2,col=as.factor(class)),size=3)+theme_bw()
+
+```
+
+We can observe that;
+
+* Gestures with opposite directions such as 3-4, 5-6, 7-8 seperated successfully.
+* Gestures with similar movements such as 1-6, 2-7 cannot be seperated successfully.
+* The gestures within the same class seems to be clustered.
+* The gesture 2 seems the most compact cluster.
