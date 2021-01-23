@@ -1,0 +1,703 @@
+---
+title: "IE 582 Homework 4"
+author: "Burak Tabak (2019702177)"
+date: "January 17, 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = F,error = F,message = F,fig.width=12, fig.height=8)
+library(data.table)
+library(glmnet)
+library(tidyverse)
+library(kableExtra)
+library(caret)
+library(rpart)
+```
+
+# Introduction
+
+In this report, the codes and results is summarised for the tasks in Homework 4.
+
+## Task 1
+
+In this part, 4 dataset is found from following [http://archive.ics.uci.edu/ml](http://archive.ics.uci.edu/ml/index.php) website for classification tasks.
+
+We will briefly give information about datasets and apply pre-processing for modeling such as reading, cleaning train/test splitting etc. Detailed information about datasets will be attached to appendix. Also, you can check corresponding links for each data set for more detailed information and data itself.
+
+In the modeling phase, 1/3 of the observations will be kept as test set. Sampling will be done randomly stratified according to target distribution.
+
+Dataset's descriptions as follows:
+
+* Title: [Student Performance Data Set](https://archive.ics.uci.edu/ml/datasets/student%2Bperformance)
+  + Task: Regression and Binary Classification (The main aim is to predict student grade range between 0-20 by using some demographic and behavioral features of students such as gender, age, family size, internet access at home, absences etc. Firstly, student grade will be estimated numerically but results and performances also provided in 0-9 as Fail and 10-20 as Pass classified according to definition in the data set)
+  + Feature Size: 33
+  + Feature Set: Mixed with numeric, ordinal and categorical features
+  + Total Instances: 649
+  + Target: 0-20 correspond to final grade of the student. Also, [0-9] as Fail and [10-20] as Pass performance will be evaluated.
+
+* Title: [Default of Credit Card Clients Data Set](https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients)
+  + Task: Binary Classification (The main aim is to predict whether default will occur in the next month for credit card account of the customer using demographic and payment history features of customers such as age, education, previous payment delay, previous paid amount etc.)
+  + Feature Size: 24
+  + Feature Set: Mixed with numeric, ordinal and categorical features
+  + Total Instances: 10000 randomly sampled observation from total 30000 instances due to computational issues.
+  + Target: Class imbalance exist in target. 6636 / 30000 classified as default. 1=Default, 0=NotDefault
+
+* Title: [Online News Popularity Data Set](https://archive.ics.uci.edu/ml/datasets/online+news+popularity)
+  + Task: Binary Classification (The main aim is to predict whether number of shares >=1400 or <1400 by using features about news such as content length, publication day, polarity of text, publication channel etc.)
+  + Feature Size: 61
+  + Feature Set: Mixed with numeric and categorical features
+  + Total Instances: 10000 randomly sampled observation from total 39797 instances due to computational issues.
+  + Target: The number of shares converted to >=1400 and <1400 classes. Class imbalance doesn't exist. Target class size are close to each other.
+
+* Title: [Covertype Data Set](http://archive.ics.uci.edu/ml/datasets/Covertype)
+  + Task: Multi-class Classification (The main aim is to predict instance’s forest cover type by using both quantitative and qualitative features such as elevation, slope, soil type etc.)
+  + Feature Size: 54
+  + Feature Set: Mixed with numeric and categorical features
+  + Total Instances: 10000 randomly sampled observation from total 581012 instances due to computational issues.
+  + Target: There are 7 class for target corresponding to different cover type.
+
+
+Now, you can find data preprocessing and train/test splits as following with general summary and target distribution.
+
+```{r}
+### Student Performance DataSet
+student_data_set=read.table("/home/burak/Desktop/Lectures/IE582/HW4/student/student-por.csv",sep=";",header=TRUE)%>%
+  mutate(Target=G3)%>%select(-G1,-G2,-G3)
+# Stratified sampling according to Target. 1/3 as test
+student_test_data = splitstackshape::stratified(student_data_set,group = "Target",size=1/3,replace = F)
+student_train_data = student_data_set%>%anti_join(student_test_data)
+
+### Default of Credit Card Clients Data Set
+default_data_set = readxl::read_xls("/home/burak/Desktop/Lectures/IE582/HW4/default of credit card clients.xls")%>%
+  mutate(Target=`default payment next month`)%>%select(-`default payment next month`)%>%sample_n(10000)
+# Stratified sampling according to Target. 1/3 as test
+default_test_data = splitstackshape::stratified(default_data_set,group = "Target",size=1/3,replace = F)
+default_train_data = default_data_set%>%anti_join(default_test_data)
+# Delete ID column
+default_train_data$ID<-NULL
+default_test_data$ID<-NULL
+
+### Online News Popularity Data Set
+news_data_set = read.csv("/home/burak/Desktop/Lectures/IE582/HW4/OnlineNewsPopularity/OnlineNewsPopularity.csv")%>%
+  mutate(Target=ifelse(shares>=1400,1,0))%>%select(-shares,-url)%>%sample_n(10000)
+# Stratified sampling according to Target. 1/3 as test
+news_test_data = splitstackshape::stratified(news_data_set,group = "Target",size=1/3,replace = F)
+news_train_data = news_data_set%>%anti_join(news_test_data)
+
+### Covertype Data Set
+covertype_data_set=fread("/home/burak/Desktop/Lectures/IE582/HW4/covtype.data")%>%
+  mutate(Target=paste0("Type_",as.character(V55)))%>%select(-V55)%>%sample_n(10000)
+# Stratified sampling according to Target. 1/3 as test. 50000 obs sampled
+covertype_test_data = splitstackshape::stratified(covertype_data_set,group = "Target",size=1/3,replace = F)
+covertype_train_data = covertype_data_set%>%anti_join(covertype_test_data)
+
+p1 = ggplot(default_train_data)+geom_histogram(aes(x=Target,fill="Train"),alpha=0.7)+
+  theme_bw()+geom_histogram(data=default_test_data,aes(x=Target,fill="Test"),alpha=0.7)+
+  labs(title="Default Target")
+
+p2 = ggplot(student_train_data)+geom_histogram(aes(x=Target,fill="Train"),alpha=0.7)+
+  theme_bw()+geom_histogram(data=student_test_data,aes(x=Target,fill="Test"),alpha=0.7)+
+  labs(title="Student Target")
+
+p3 = ggplot(news_train_data)+geom_histogram(aes(x=Target,fill="Train"),alpha=0.7)+
+  theme_bw()+geom_histogram(data=news_test_data,aes(x=Target,fill="Test"),alpha=0.7)+
+  labs(title="News Target")
+
+p4 = ggplot(covertype_train_data)+geom_histogram(aes(x=Target,fill="Train"),alpha=0.7,stat="count")+
+  theme_bw()+geom_histogram(data=covertype_test_data,aes(x=Target,fill="Test"),alpha=0.7,stat="count")+
+  labs(title="Covertype Target")
+
+dataset_summary=data.table(Title="Default Data Set",Type="Train",N_Feature=ncol(default_train_data),N_Obs=nrow(default_train_data))%>%
+  bind_rows(data.table(Title="Default Data Set",Type="Test",N_Feature=ncol(default_test_data),N_Obs=nrow(default_test_data)))%>%
+  bind_rows(data.table(Title="Student Data Set",Type="Train",N_Feature=ncol(student_train_data),N_Obs=nrow(student_train_data)))%>%
+  bind_rows(data.table(Title="Student Data Set",Type="Test",N_Feature=ncol(student_test_data),N_Obs=nrow(student_test_data)))%>%
+  bind_rows(data.table(Title="News Data Set",Type="Train",N_Feature=ncol(news_train_data),N_Obs=nrow(news_train_data)))%>%
+  bind_rows(data.table(Title="News Data Set",Type="Test",N_Feature=ncol(news_test_data),N_Obs=nrow(news_test_data)))%>%
+  bind_rows(data.table(Title="Covertype Data Set",Type="Train",N_Feature=ncol(covertype_train_data),N_Obs=nrow(covertype_train_data)))%>%
+  bind_rows(data.table(Title="Covertype Data Set",Type="Test",N_Feature=ncol(covertype_test_data),N_Obs=nrow(covertype_test_data)))
+  
+dataset_summary%>%kbl()%>%kable_paper()
+
+gridExtra::grid.arrange(p1,p2,p3,p4,nrow=2,ncol=2)
+
+```
+
+## Task2
+
+In this part, we will build cross-validation scheme for each data set separately.
+
+For penalized regression, we will use built-in cv.glmnet function. For random forest and stochastic gradient boosting, we will use caret package to tune parameters by cross validation. Lastly, for CART, we will build cross validation scheme manually.
+
+In this part, we will report cross validation and test performances one by one. Also, observations and comments for results will be given in order. Later on, at the end; we will summarise and discuss overall results.  
+
+Let's start with first data set.
+
+### Student Performance Data Set
+
+Look at the variables of the data firstly. We will consider this problem as regression problem.
+
+```{r}
+skimmed <- skimr::skim_to_wide(student_train_data)
+skimmed
+```
+
+Now, we observe that there is no missing data so missing value imputation is not needed.
+
+However, there are categorical features so for modeling, we should apply one-hot encoding to convert it to numerical.
+
+Also, we will remove zero variance columns.
+
+```{r}
+# One-hot Encoding
+dmmy=caret::dummyVars("Target~.",data=student_train_data,fullRank=T)
+trainData_mat <- predict(dmmy, newdata = student_train_data)
+testData_mat <- predict(dmmy, newdata = student_test_data)
+student_train_v2 <- data.frame(trainData_mat)
+student_test_v2 <- data.frame(testData_mat)
+student_train_v2$Target <- student_train_data$Target
+student_test_v2$Target <- student_test_data$Target
+# Remove Zero Variance Features
+remove_cols=nearZeroVar(student_train_v2)
+student_train_v2=student_train_v2[,-remove_cols]
+student_test_v2=student_test_v2[,-remove_cols]
+head(student_train_v2)
+```
+
+Now, we will apply cross validation to choose best parameters.
+
+10 fold Cross Validation applied for each model. As a performance measure Mean Absolute Error is chosen because we consider this problem as regression problem. However; the test performances will be given both in MAE and Accuracy for Pass and Fail classes for [10-20] and [0-9] grades.
+
+```{r results="hide"}
+# Penalized Regression Approaches Using Glmnet
+set.seed(1)
+penalized_reg = cv.glmnet(x = as.matrix(student_train_v2%>%select(-Target)),
+                          y=student_train_v2$Target,
+                          type.measure = c("mae"),
+                          nfolds = 10,
+                          alpha=1)
+
+student_test_v2$Prediction_PenReg = 
+  predict(penalized_reg,as.matrix(student_test_v2%>%select(-Target)),s=c("lambda.min"))[,1]
+
+## Cart Using Rpart
+# Apply 10 fold CV
+nfold=10
+# Define tune grid
+tune_grid = expand.grid(min_leaf_obs=seq(1,16,3),complexity=seq(0,0.5,0.1)) 
+# Generate CV folds
+set.seed(1)
+folds <- createFolds(1:nrow(student_train_v2), k = nfold)
+cv_data = student_train_v2
+
+all_cv_stat = tibble()
+for(p in 1:nrow(tune_grid)){
+  temp_param = tune_grid[p,]
+  temp_result = tibble()
+  for(i in 1:nfold){
+  temp_test = cv_data[folds[[i]],]
+  temp_train = cv_data[-folds[[i]],]
+  # Build CART
+  temp_fit=rpart::rpart(Target~.,data = temp_train,control = rpart.control(minbucket = temp_param$min_leaf_obs,cp=temp_param$complexity))
+  temp_test$Prediction = predict(temp_fit,temp_test)
+  temp_result=rbind(temp_result,temp_test)
+  }
+  temp_stat =data.table(temp_param,mae=mean(abs(temp_result$Prediction-temp_result$Target)))
+  print(temp_stat)
+  all_cv_stat = rbind(all_cv_stat,temp_stat)
+}
+
+best_set = all_cv_stat%>%arrange(mae)%>%head(1)
+final_cart = rpart::rpart(Target~.,data = student_train_v2,control = rpart.control(minbucket = best_set$min_leaf_obs,cp=best_set$complexity))
+student_test_v2$Prediction_CART = predict(final_cart,as.data.table(student_test_v2)[,colnames(student_train_v2),with=F])
+
+
+## Random Forest
+control <- trainControl(method='cv', 
+                        number=10, 
+                        search='grid')
+tune_grid <- expand.grid(.mtry = seq(2,12,2)) 
+set.seed(1)
+rf_cv <- train(Target ~ ., 
+                       data =student_train_v2,
+                       method = 'rf',
+                       ntree=500,
+                       nodesize=5,
+                       metric = 'MAE',
+                       trControl=control,
+                       tuneGrid = tune_grid)
+
+student_test_v2$Prediction_RF = predict(rf_cv,student_test_v2)
+
+
+## Stochastic Gradient Boosting
+control <- trainControl(method='cv', 
+                        number=10, 
+                        search='grid')
+gbm_grid <-  expand.grid(interaction.depth = c(2, 4, 6),
+                         n.trees = c(100,250,500), 
+                         shrinkage = c(0.001,0.01,0.1),
+                         n.minobsinnode = 10)
+set.seed(1)
+gbm_cv <- train(Target ~ ., 
+                data =student_train_v2,
+                method = 'gbm',
+                metric = 'MAE',
+                trControl=control,
+                tuneGrid = gbm_grid)
+
+student_test_v2$Prediction_GBM = predict(gbm_cv,student_test_v2)
+```
+
+Best parameters as following for this dataset;
+
+```{r}
+print(penalized_reg)
+print(best_set)
+print(rf_cv)
+plot(rf_cv)
+print(gbm_cv)
+plot(gbm_cv)
+```
+
+Now ,we can report test results in terms of Mean Absolute Error, Mean Square Error for grades and Accuracy with F1-score for Pass, Fail predictions.
+
+```{r}
+student_test_result_data = melt(student_test_v2%>%select(Target,contains("Prediction")),1)%>%mutate(Target_Class = ifelse(Target>=10,"Pass","Fail"),
+                                                                         Predicted_Class = ifelse(value>=10,"Pass","Fail"))
+
+student_test_performance = student_test_result_data%>%group_by(model=variable)%>%summarise(MAE=mean(abs(Target-value)),MSE=mean((Target-value)^2),
+                                                                Accuracy = sum(Target_Class==Predicted_Class)/n(),
+                                                                F1_Score=MLmetrics::F1_Score(Target_Class,Predicted_Class,positive = "Pass"))
+student_test_performance%>%kbl()%>%kable_paper()
+
+```
+
+According to results, we can observe that:
+* In terms of MAE; the best results is given by Random Forest. We tuned our algorithms in terms of MAE, so it is possible to say that best performing algorithm is Random Forest in regression case. 
+* GBM and Penalized regression also performs good but CART is behind of all algorithms. This may because of averaging in terminal nodes because we have regression problem.
+* Cross validation and test errors seem close for all methods. This is a good sign for the degree of fitting. It seems that under/over fitting is not the case. However, as usual, test error is slightly worse than cross validation errors for methods.
+* In Random Forest, model is better with moderate mtry parameters according to tuning grid. CART performs better with small complexity parameter. Stochasting gradient boosting is better with moderate parameters according to tuning grid.
+
+
+### Default of Credit Card Clients Data Set
+
+Look at the variables of the data firstly. We will consider this problem as binary classification problem.
+
+```{r}
+skimmed <- skimr::skim_to_wide(default_train_data)
+skimmed
+```
+
+
+
+Now, we observe that there is no missing data so missing value imputation is not needed.
+
+Also, all variables are numeric or ordinal so no need for dummy encoding. Some categorical variables are also in one-hot coded. Also, there is no zero variance column.
+
+Now, we will apply cross validation to choose best parameters.
+
+5 fold Cross Validation applied for each model. As a performance measure Area Under ROC curve is chosen because we consider this problem as binary classification problem and there is class imbalance. Because of class imbalance, accuracy may mislead. AUC is more reliable measure for class imbalanced problems.
+
+```{r results="hide"}
+# Penalized Regression Approaches Using Glmnet
+set.seed(1)
+penalized_reg2 = cv.glmnet(x = as.matrix(default_train_data%>%select(-Target)),
+                          y=as.numeric(default_train_data$Target),
+                          family="binomial",
+                          type.measure = c("auc"),
+                          nfolds = 5,
+                          alpha=1)
+
+default_test_data$Prediction_PenReg = 
+  predict(penalized_reg2,newx=as.matrix(default_test_data%>%select(-Target)),s=c("lambda.min"),type="response")[,1]
+
+
+## Cart Using Rpart
+# Apply 5 fold CV
+nfold=5
+# Define tune grid
+tune_grid = expand.grid(min_leaf_obs=seq(1,16,3),complexity=seq(0,0.5,0.1)) 
+# Generate CV folds
+set.seed(1)
+folds <- createFolds(1:nrow(default_train_data), k = nfold)
+cv_data = default_train_data
+
+all_cv_stat = tibble()
+for(p in 1:nrow(tune_grid)){
+  temp_param = tune_grid[p,]
+  temp_result = tibble()
+  for(i in 1:nfold){
+    temp_test = cv_data[folds[[i]],]
+    temp_train = cv_data[-folds[[i]],]
+    # Build CART
+    temp_fit=rpart::rpart(as.factor(Target)~.,data = temp_train,method="class",control = rpart.control(minbucket = temp_param$min_leaf_obs,cp=temp_param$complexity))
+    temp_test$Prediction = predict(temp_fit,temp_test)
+    temp_result=rbind(temp_result,temp_test)
+  }
+  temp_stat =data.table(temp_param,AUC=MLmetrics::AUC(temp_result$Prediction[,2],temp_result$Target))
+  print(temp_stat)
+  all_cv_stat = rbind(all_cv_stat,temp_stat)
+}
+
+best_set2 = all_cv_stat%>%arrange(-AUC)%>%head(1)
+final_cart2 = rpart::rpart(Target~.,data = default_train_data,method="class",control = rpart.control(minbucket = best_set2$min_leaf_obs,cp=best_set2$complexity))
+default_test_data$Prediction_CART = predict(final_cart2,newdata=default_test_data[,colnames(default_train_data),with=F],type="prob")[,2]
+
+
+## Random Forest
+control <- trainControl(method='cv', 
+                        number=5, 
+                        search='grid',
+                        summaryFunction = twoClassSummary,
+                        classProbs = T)
+tune_grid <- expand.grid(.mtry = seq(2,8,2)) 
+set.seed(1)
+rf_cv2 <- train(make.names(as.factor(Target)) ~ ., 
+               data =default_train_data,
+               method = 'rf',
+               ntree=100,
+               nodesize=5,
+               metric = 'ROC',
+               trControl=control,
+               tuneGrid = tune_grid)
+
+default_test_data$Prediction_RF = predict(rf_cv2,default_test_data,type = "prob")[,2]
+
+
+
+## Stochastic Gradient Boosting
+control <- trainControl(method='cv', 
+                        number=5, 
+                        search='grid',
+                        summaryFunction = twoClassSummary,
+                        classProbs = T)
+
+gbm_grid <-  expand.grid(interaction.depth = c(2, 4, 6),
+                         n.trees = c(50,100,200), 
+                         shrinkage = c(0.001,0.01,0.1),
+                         n.minobsinnode = 10)
+set.seed(1)
+gbm_cv2 <- train(make.names(as.factor(Target)) ~ ., 
+                data =default_train_data,
+                method = 'gbm',
+                metric = 'ROC',
+                trControl=control,
+                tuneGrid = gbm_grid)
+
+default_test_data$Prediction_GBM = predict(gbm_cv2,default_test_data,type="prob")[,2]
+
+```
+
+
+Best parameters as following for this dataset;
+
+```{r}
+print(penalized_reg2)
+print(best_set2)
+print(rf_cv2)
+plot(rf_cv2)
+print(gbm_cv2)
+plot(gbm_cv2)
+```
+
+Now ,we can report test results in terms of AUC, Accuracy and F1-score for Default and Non-default  predictions.
+
+```{r}
+default_test_result_data = melt(default_test_data%>%select(Target,contains("Prediction")),1)%>%mutate(Target_Class = ifelse(as.numeric(Target)==1,"Default","No"),
+                                                                                                    Predicted_Class = ifelse(value>=0.5,"Default","No"))
+
+default_test_performance = default_test_result_data%>%group_by(model=variable)%>%summarise(AUC=MLmetrics::AUC(value,Target),
+                                                                                           Accuracy = sum(Target_Class==Predicted_Class)/n(),
+                                                                                           F1_Score=MLmetrics::F1_Score(Target_Class,Predicted_Class,positive ="Default"))
+default_test_performance%>%kbl()%>%kable_paper()
+
+```
+
+According to results, we can observe that:
+* In terms of AUC; the best results is given by Stochastic Gradient Boosting.  
+* Random Forest and CART also performs good but Penalized Regression is behind of all algorithms. This may because of tree based algorithms generally performs better in binary classification task because of nonlinear relationship. In binary target, linear models lose the correlation relation.
+* Interestingly, Test performances seem better compared to cross-validation performances. This may occur by randomness or underfitting.
+* In Random Forest, small mtry parameters give better results. CART performs better with small complexity parameter. Stochasting gradient boosting is better with larger learning rate.
+
+
+### Online News Popularity Data Set
+
+Look at the variables of the data firstly. We will consider this problem as binary classification problem.
+
+```{r}
+skimmed <- skimr::skim_to_wide(news_train_data)
+skimmed
+```
+
+
+
+Now, we observe that there is no missing data so missing value imputation is not needed.
+
+Also, all variables are numeric or ordinal so no need for dummy encoding. Some categorical variables are also in one-hot coded. Also, there is no zero variance column.
+
+Now, we will apply cross validation to choose best parameters.
+
+5 fold Cross Validation applied for each model. As a performance measure Area Under ROC curve is chosen because we consider this problem as binary classification problem.
+
+```{r results="hide"}
+# Penalized Regression Approaches Using Glmnet
+penalized_reg3 = cv.glmnet(x = as.matrix(news_train_data%>%select(-Target)),
+                           y=as.numeric(news_train_data$Target),
+                           family="binomial",
+                           type.measure = c("auc"),
+                           nfolds = 5,
+                           alpha=1)
+
+news_test_data$Prediction_PenReg = 
+  predict(penalized_reg3,newx=as.matrix(news_test_data%>%select(-Target)),s=c("lambda.min"),type="response")[,1]
+
+
+## Cart Using Rpart
+# Apply 5 fold CV
+nfold=5
+# Define tune grid
+tune_grid = expand.grid(min_leaf_obs=seq(1,16,3),complexity=seq(0,0.5,0.1)) 
+# Generate CV folds
+folds <- createFolds(1:nrow(news_train_data), k = nfold)
+cv_data = news_train_data
+
+all_cv_stat = tibble()
+for(p in 1:nrow(tune_grid)){
+  temp_param = tune_grid[p,]
+  temp_result = tibble()
+  for(i in 1:nfold){
+    temp_test = cv_data[folds[[i]],]
+    temp_train = cv_data[-folds[[i]],]
+    # Build CART
+    temp_fit=rpart::rpart(as.factor(Target)~.,data = temp_train,method="class",control = rpart.control(minbucket = temp_param$min_leaf_obs,cp=temp_param$complexity))
+    temp_test$Prediction = predict(temp_fit,temp_test)
+    temp_result=rbind(temp_result,temp_test)
+  }
+  temp_stat =data.table(temp_param,AUC=MLmetrics::AUC(temp_result$Prediction[,2],temp_result$Target))
+  print(temp_stat)
+  all_cv_stat = rbind(all_cv_stat,temp_stat)
+}
+
+best_set3 = all_cv_stat%>%arrange(-AUC)%>%head(1)
+final_cart3 = rpart::rpart(Target~.,data = news_train_data,method="class",control = rpart.control(minbucket = best_set3$min_leaf_obs,cp=best_set3$complexity))
+news_test_data$Prediction_CART = predict(final_cart3,newdata=news_test_data[,colnames(news_train_data),with=F],type="prob")[,2]
+
+
+## Random Forest
+control <- trainControl(method='cv', 
+                        number=5, 
+                        search='grid',
+                        summaryFunction = twoClassSummary,
+                        classProbs = T)
+tune_grid <- expand.grid(.mtry = seq(3,9,3)) 
+rf_cv3 <- train(make.names(as.factor(Target)) ~ ., 
+                data =news_train_data,
+                method = 'rf',
+                ntree=100,
+                nodesize=5,
+                metric = 'ROC',
+                trControl=control,
+                tuneGrid = tune_grid)
+
+news_test_data$Prediction_RF = predict(rf_cv3,news_test_data,type = "prob")[,2]
+
+
+
+## Stochastic Gradient Boosting
+control <- trainControl(method='cv', 
+                        number=5, 
+                        search='grid',
+                        summaryFunction = twoClassSummary,
+                        classProbs = T)
+
+gbm_grid <-  expand.grid(interaction.depth = c(2, 4, 6),
+                         n.trees = c(50,100,150), 
+                         shrinkage = c(0.001,0.01,0.1),
+                         n.minobsinnode = 10)
+gbm_cv3 <- train(make.names(as.factor(Target)) ~ ., 
+                 data =news_train_data,
+                 method = 'gbm',
+                 metric = 'ROC',
+                 trControl=control,
+                 tuneGrid = gbm_grid)
+
+news_test_data$Prediction_GBM = predict(gbm_cv3,news_test_data,type="prob")[,2]
+
+```
+
+
+Best parameters as following for this dataset;
+
+```{r}
+print(penalized_reg3)
+print(best_set3)
+print(rf_cv3)
+plot(rf_cv3)
+print(gbm_cv3)
+plot(gbm_cv3)
+```
+
+Now ,we can report test results in terms of AUC, Accuracy and F1-score for Popular and Non-popular  predictions.
+
+```{r}
+news_test_result_data = melt(news_test_data%>%select(Target,contains("Prediction")),1)%>%mutate(Target_Class = ifelse(as.numeric(Target)==1,"Popular","No"),
+                                                                                                      Predicted_Class = ifelse(value>=0.5,"Popular","No"))
+
+news_test_performance = news_test_result_data%>%group_by(model=variable)%>%summarise(AUC=MLmetrics::AUC(value,Target),
+                                                                                           Accuracy = sum(Target_Class==Predicted_Class)/n(),
+                                                                                           F1_Score=MLmetrics::F1_Score(Target_Class,Predicted_Class,positive ="Popular"))
+news_test_performance%>%kbl()%>%kable_paper()
+
+```
+
+According to results, we can observe that:
+* In terms of AUC; the best results is given by Stochastic Gradient Boosting.  
+* Random Forest and penalized regression also performs good but CART is behind of all algorithms. This may because of there are many features to consider. CART algorithm have difficulty in integrating effects of many variables. However other methods are more likely to work with more features.
+* Cross validation and test errors seem close for all methods. This is a good sign for the degree of fitting. It seems that under/over fitting is not the case. However, as usual, test error is slightly worse than cross validation errors for methods.
+* In Random Forest, model is better with smaller mtry parameters.
+* Boosting is better with larger learning rate. This may be the alert for underfitting.
+
+
+### Covertype Data Set
+
+Look at the variables of the data firstly. We will consider this problem as multinomial classification problem with 7 target level.
+
+```{r}
+skimmed <- skimr::skim_to_wide(covertype_train_data)
+skimmed
+```
+
+
+
+Now, we observe that there is no missing data so missing value imputation is not needed.
+
+Also, all variables are numeric or ordinal so no need for dummy encoding. Also, there is no zero variance column.
+
+Now, we will apply cross validation to choose best parameters.
+
+5 fold Cross Validation applied for each model. As a performance measure Accuracy is chosen because we consider this problem as multinomial classification problem.
+
+```{r results="hide"}
+# Penalized Regression Approaches Using Glmnet
+penalized_reg4 = cv.glmnet(x = as.matrix(covertype_train_data%>%select(-Target)),
+                           y=as.factor(covertype_train_data$Target),
+                           family="multinomial",
+                           type.measure = c("class"),
+                           nfolds = 5,
+                           alpha=1)
+
+covertype_test_data$Prediction_PenReg = 
+  predict(penalized_reg4,newx=as.matrix(covertype_test_data%>%select(-Target)),s=c("lambda.min"),type="class")[,1]
+
+
+## Cart Using Rpart
+# Apply 5 fold CV
+nfold=5
+# Define tune grid
+tune_grid = expand.grid(min_leaf_obs=seq(1,16,3),complexity=seq(0,0.5,0.1)) 
+# Generate CV folds
+folds <- createFolds(1:nrow(covertype_train_data), k = nfold)
+cv_data = covertype_train_data
+
+all_cv_stat = tibble()
+for(p in 1:nrow(tune_grid)){
+  temp_param = tune_grid[p,]
+  temp_result = tibble()
+  for(i in 1:nfold){
+    temp_test = cv_data[folds[[i]],]
+    temp_train = cv_data[-folds[[i]],]
+    # Build CART
+    temp_fit=rpart::rpart(as.factor(Target)~.,data = temp_train,method="class",control = rpart.control(minbucket = temp_param$min_leaf_obs,cp=temp_param$complexity))
+    temp_test$Prediction = predict(temp_fit,temp_test,type="class")
+    temp_result=rbind(temp_result,temp_test)
+  }
+  temp_stat =data.table(temp_param,Accuracy=sum(temp_test$Prediction==temp_test$Target)/nrow(temp_test))
+  print(temp_stat)
+  all_cv_stat = rbind(all_cv_stat,temp_stat)
+}
+
+best_set4 = all_cv_stat%>%arrange(-Accuracy)%>%head(1)
+final_cart4 = rpart::rpart(Target~.,data = covertype_train_data,method="class",control = rpart.control(minbucket = best_set4$min_leaf_obs,cp=best_set4$complexity))
+covertype_test_data$Prediction_CART = predict(final_cart4,newdata=covertype_test_data[,colnames(covertype_train_data),with=F],type="class")
+
+
+## Random Forest
+control <- trainControl(method='cv', 
+                        number=5, 
+                        search='grid')
+tune_grid <- expand.grid(.mtry = seq(3,9,3)) 
+rf_cv4 <- train(make.names(as.factor(Target)) ~ ., 
+                data =covertype_train_data,
+                method = 'rf',
+                ntree=100,
+                nodesize=5,
+                metric = 'Accuracy',
+                trControl=control,
+                tuneGrid = tune_grid)
+
+covertype_test_data$Prediction_RF = predict(rf_cv4,covertype_test_data,type = "raw")
+
+
+
+## Stochastic Gradient Boosting
+control <- trainControl(method='cv', 
+                        number=5, 
+                        search='grid')
+
+gbm_grid <-  expand.grid(interaction.depth = c(2, 4, 6),
+                         n.trees = c(50,100,150), 
+                         shrinkage = c(0.001,0.01,0.1),
+                         n.minobsinnode = 10)
+gbm_cv4 <- train(make.names(as.factor(Target)) ~ ., 
+                 data =covertype_train_data,
+                 method = 'gbm',
+                 metric = 'Accuracy',
+                 trControl=control,
+                 tuneGrid = gbm_grid)
+
+covertype_test_data$Prediction_GBM = predict(gbm_cv4,covertype_test_data,type="raw")
+
+```
+
+
+Best parameters as following for this dataset;
+
+```{r}
+print(penalized_reg4)
+print(best_set4)
+print(rf_cv4)
+plot(rf_cv4)
+print(gbm_cv4)
+plot(gbm_cv4)
+```
+
+Now ,we can report test results in terms of Accuracy and F1-score for covertype  predictions.
+
+```{r}
+covertype_test_result_data = melt(covertype_test_data%>%select(Target,contains("Prediction")),1)
+covertype_test_performance = covertype_test_result_data%>%group_by(model=variable)%>%summarise(Accuracy = sum(Target==value)/n(),
+                                                                                               F1_Score=MLmetrics::F1_Score(Target,value))
+covertype_test_performance%>%kbl()%>%kable_paper()
+
+```
+
+According to results, we can observe that:
+* In terms of Accuracy; the best results is given by Random Forest. 
+* GBM also performs good but CART and Penalized regression are behind of other algorithms. Again, there are many feature so CART have difficulty in integrating effects of different features. Also, relations seem non-linear, Penalized regression performs worse.
+* Cross validation and test errors seem close for all methods. This is a good sign for the degree of fitting. It seems that under/over fitting is not the case. 
+* In Random Forest, model is better with larger mtry parameters. Also, boosting is better with larger learning rate. This may be the alert for underfitting.
+
+
+## Overall Summary
+
+According to results for 4 dataset
+
+* Random Forest and Stochastic Gradient Boosting performs better than penalized regression and CART.
+* Test and cross validation are close to each other generally. This is a good sign for fitting degree.
+* With large feature set, CART fails
+* Penalized regression give worse results when nonlinear relationships exist.
+
+
+
+
